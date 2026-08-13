@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MetricField } from "./components/MetricField";
 import { SegmentedControl } from "./components/SegmentedControl";
 import { APP_CONFIG } from "./config";
 import { formatDisplayDate, getTodayInLondon } from "./lib/date";
 import { createEmptyDraft, draftFingerprint, validateDraft } from "./lib/records";
 import { useGoogleAuth } from "./services/auth";
+import { LocalRecordRepository } from "./services/localRecords";
 import { createSheetsGateway, SheetsApiError } from "./services/sheets";
 import {
   METRIC_KEYS,
@@ -17,7 +18,7 @@ import {
   type ValidationErrors,
 } from "./types";
 
-type DataStatus = "idle" | "loading" | "saving" | "saved" | "error";
+type DataStatus = "idle" | "loading" | "saving" | "saved" | "pending" | "syncing" | "error";
 
 const recordAsDraft = (
   record: NonNullable<ReturnType<typeof validateDraft>["record"]>,
@@ -33,7 +34,10 @@ const recordAsDraft = (
 
 const App = () => {
   const auth = useGoogleAuth(APP_CONFIG.googleClientId);
+  const localRepository = useMemo(() => new LocalRecordRepository(), []);
   const today = getTodayInLondon();
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  const [localRecords, setLocalRecords] = useState(() => localRepository.list());
   const [selectedDate, setSelectedDate] = useState(today);
   const [draft, setDraft] = useState<LifeMetricDraft>(() => createEmptyDraft(today));
   const [baseline, setBaseline] = useState(() => draftFingerprint(createEmptyDraft(today)));
@@ -41,6 +45,7 @@ const App = () => {
   const [dataStatus, setDataStatus] = useState<DataStatus>("idle");
   const [fieldErrors, setFieldErrors] = useState<ValidationErrors>({});
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const syncRunningRef = useRef(false);
 
   const gateway = useMemo(() => {
     if (!auth.accessToken || APP_CONFIG.errors.length > 0) return null;
@@ -52,6 +57,13 @@ const App = () => {
   }, [auth.accessToken]);
 
   const isDirty = draftFingerprint(draft) !== baseline;
+  const selectedLocalRecord = localRecords[selectedDate] ?? null;
+  const pendingCount = Object.values(localRecords).filter((record) => record.status === "pending").length;
+  const canUseApp = auth.status === "authenticated" || auth.hasAuthorizedBefore;
+
+  const refreshLocalRecords = useCallback(() => {
+    setLocalRecords(localRepository.list());
+  }, [localRepository]);
 
   const handleSheetsError = useCallback(
     (error: unknown) => {
@@ -65,29 +77,132 @@ const App = () => {
   );
 
   useEffect(() => {
-    if (auth.status !== "authenticated" || !gateway) return;
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  const syncPendingRecords = useCallback(async () => {
+    if (!gateway || !isOnline || syncRunningRef.current) return;
+    syncRunningRef.current = true;
+
+    try {
+      let pendingBatch = localRepository.pending();
+      while (pendingBatch.length > 0) {
+        for (const pending of pendingBatch) {
+          setDataStatus("syncing");
+          setStatusMessage(`Syncing ${formatDisplayDate(pending.draft.date)}…`);
+          const { record } = validateDraft(pending.draft);
+          if (!record) {
+            throw new Error(
+              `Saved data for ${formatDisplayDate(pending.draft.date)} is invalid and could not sync.`,
+            );
+          }
+
+          let attempt = 0;
+          while (true) {
+            try {
+              const result = await gateway.upsertRecord(record);
+              localRepository.markSynced(pending.draft.date, pending.revision, result.rowNumber);
+              refreshLocalRecords();
+              break;
+            } catch (error: unknown) {
+              const retryable =
+                error instanceof SheetsApiError &&
+                (error.code === "network" || (error.code === "api" && error.status >= 500));
+              if (!retryable || attempt >= 2) throw error;
+              await new Promise((resolve) =>
+                window.setTimeout(resolve, [500, 1_500, 4_000][attempt++]),
+              );
+            }
+          }
+        }
+        const revisions = new Map(pendingBatch.map((item) => [item.draft.date, item.revision]));
+        pendingBatch = localRepository
+          .pending()
+          .filter((item) => revisions.get(item.draft.date) !== item.revision);
+      }
+
+      refreshLocalRecords();
+      setDataStatus("saved");
+      setStatusMessage("All saved days are synced.");
+    } catch (error: unknown) {
+      handleSheetsError(error);
+    } finally {
+      syncRunningRef.current = false;
+    }
+  }, [gateway, handleSheetsError, isOnline, localRepository, refreshLocalRecords]);
+
+  useEffect(() => {
+    if (auth.status === "authenticated" && gateway && isOnline && pendingCount > 0) {
+      void syncPendingRecords();
+    }
+  }, [auth.status, gateway, isOnline, pendingCount, syncPendingRecords]);
+
+  useEffect(() => {
+    if (!canUseApp) return;
     let active = true;
+    setFieldErrors({});
+
+    const local = localRepository.get(selectedDate);
+    if (local?.status === "pending" || !gateway || !isOnline) {
+      const nextDraft = local?.draft ?? createEmptyDraft(selectedDate);
+      setDraft(nextDraft);
+      setBaseline(draftFingerprint(nextDraft));
+      setRowNumber(local?.rowNumber ?? null);
+      setDataStatus(local?.status === "pending" ? "pending" : "idle");
+      setStatusMessage(
+        local?.status === "pending"
+          ? !isOnline
+            ? "Saved on this device · waiting to sync"
+            : !gateway
+              ? "Saved on this device · reconnect Google to sync"
+              : "Saved on this device · waiting to sync"
+          : !isOnline
+            ? "Offline · using data on this device"
+            : "On-device data · reconnect Google to refresh",
+      );
+      return;
+    }
+
     setDataStatus("loading");
     setStatusMessage(null);
-    setFieldErrors({});
 
     gateway
       .loadRecord(selectedDate)
       .then((loaded) => {
         if (!active) return;
-        setDraft(loaded.draft);
-        setBaseline(draftFingerprint(loaded.draft));
-        setRowNumber(loaded.rowNumber);
-        setDataStatus("idle");
+        const cached = localRepository.cacheSynced(loaded.draft, loaded.rowNumber);
+        refreshLocalRecords();
+        setDraft(cached.draft);
+        setBaseline(draftFingerprint(cached.draft));
+        setRowNumber(cached.rowNumber);
+        setDataStatus(cached.status === "pending" ? "pending" : "idle");
       })
       .catch((error: unknown) => {
-        if (active) handleSheetsError(error);
+        if (!active) return;
+        const fallback = localRepository.get(selectedDate);
+        if (error instanceof SheetsApiError && error.code === "network") {
+          const nextDraft = fallback?.draft ?? createEmptyDraft(selectedDate);
+          setDraft(nextDraft);
+          setBaseline(draftFingerprint(nextDraft));
+          setRowNumber(fallback?.rowNumber ?? null);
+          setDataStatus(fallback?.status === "pending" ? "pending" : "idle");
+          setStatusMessage("Could not reach Google Sheets · using data on this device");
+          return;
+        }
+        handleSheetsError(error);
       });
 
     return () => {
       active = false;
     };
-  }, [auth.status, gateway, handleSheetsError, selectedDate]);
+  }, [canUseApp, gateway, handleSheetsError, isOnline, localRepository, refreshLocalRecords, selectedDate]);
 
   useEffect(() => {
     if (!isDirty) return;
@@ -111,43 +226,48 @@ const App = () => {
     setStatusMessage(null);
   };
 
+  const markDraftChanged = () => {
+    setStatusMessage(null);
+    setDataStatus((current) => (current === "saving" ? current : "idle"));
+  };
+
   const updateMetric = (key: MetricKey, value: string) => {
     setDraft((current) => ({
       ...current,
       scores: { ...current.scores, [key]: value },
     }));
     setFieldErrors((current) => ({ ...current, [key]: undefined }));
-    if (dataStatus === "saved") setDataStatus("idle");
+    markDraftChanged();
   };
 
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!gateway || dataStatus === "saving") return;
+    if (dataStatus === "saving") return;
     const { record, errors } = validateDraft(draft);
     setFieldErrors(errors);
 
     if (!record) {
       setDataStatus("error");
-      setStatusMessage("Complete the highlighted fields before saving.");
+      setStatusMessage("Correct the highlighted fields before saving.");
       document.querySelector<HTMLElement>("[aria-invalid='true'], .field-error")?.focus?.();
       return;
     }
 
-    setDataStatus("saving");
-    setStatusMessage(null);
     try {
-      const result = rowNumber
-        ? await gateway.updateRecord(rowNumber, record)
-        : await gateway.appendRecord(record);
       const savedDraft = recordAsDraft(record);
+      localRepository.savePending(savedDraft, rowNumber);
+      refreshLocalRecords();
       setDraft(savedDraft);
       setBaseline(draftFingerprint(savedDraft));
-      setRowNumber(result.rowNumber);
       setFieldErrors({});
-      setDataStatus("saved");
-      setStatusMessage(result.created ? "Day created and saved." : "Changes saved.");
+      setDataStatus("pending");
+      setStatusMessage("Saved on this device · waiting to sync");
+      if (gateway && isOnline) void syncPendingRecords();
     } catch (error: unknown) {
-      handleSheetsError(error);
+      setDataStatus("error");
+      setStatusMessage(
+        error instanceof Error ? error.message : "This device could not save your day locally.",
+      );
     }
   };
 
@@ -167,7 +287,7 @@ const App = () => {
     );
   }
 
-  if (auth.status !== "authenticated") {
+  if (!canUseApp) {
     const isInitializing = auth.status === "initializing";
     const isExpired = auth.status === "expired";
     return (
@@ -208,9 +328,25 @@ const App = () => {
             <h1>Life Metrics</h1>
           </div>
         </div>
-        <button className="button button--quiet" type="button" onClick={auth.signOut}>
-          Sign out
-        </button>
+        <div className="header-actions">
+          <div className={`sync-badge${!isOnline ? " sync-badge--offline" : ""}`} role="status" aria-live="polite">
+            {!isOnline
+              ? pendingCount > 0
+                ? `Offline · ${pendingCount} pending`
+                : "Offline"
+              : pendingCount > 0
+                ? `${pendingCount} pending`
+                : "Synced"}
+          </div>
+          <button
+            className="button button--quiet"
+            type="button"
+            onClick={auth.status === "authenticated" ? auth.signOut : auth.connect}
+            disabled={auth.status !== "authenticated" && !auth.isGoogleReady}
+          >
+            {auth.status === "authenticated" ? "Sign out" : "Reconnect Google"}
+          </button>
+        </div>
       </header>
 
       <main className="content">
@@ -285,6 +421,7 @@ const App = () => {
                   onChange={(j) => {
                     setDraft((current) => ({ ...current, j }));
                     setFieldErrors((current) => ({ ...current, j: undefined }));
+                    markDraftChanged();
                   }}
                 />
                 <SegmentedControl<QualityOfDay>
@@ -297,6 +434,7 @@ const App = () => {
                   onChange={(quality) => {
                     setDraft((current) => ({ ...current, quality }));
                     setFieldErrors((current) => ({ ...current, quality: undefined }));
+                    markDraftChanged();
                   }}
                 />
               </div>
@@ -315,13 +453,14 @@ const App = () => {
                   onChange={(event) => {
                     setDraft((current) => ({ ...current, notes: event.target.value }));
                     setFieldErrors((current) => ({ ...current, notes: undefined }));
+                    markDraftChanged();
                   }}
                   placeholder="What happened today? Capture the moments, patterns, and details you want to remember…"
                 />
                 {fieldErrors.notes ? (
                   <p className="field-error" id="notes-error" role="alert">{fieldErrors.notes}</p>
                 ) : (
-                  <p className="field-help" id="notes-help">Required · Saved directly to column T.</p>
+                  <p className="field-help" id="notes-help">Optional · Saved directly to column T.</p>
                 )}
               </div>
             </section>
@@ -333,7 +472,14 @@ const App = () => {
                   aria-hidden="true"
                 />
                 <span>
-                  {statusMessage || (isDirty ? "Unsaved changes" : rowNumber ? "Existing day loaded" : "New day")}
+                  {statusMessage ||
+                    (isDirty
+                      ? "Unsaved changes"
+                      : selectedLocalRecord?.status === "pending"
+                        ? "Saved on this device · waiting to sync"
+                        : rowNumber || selectedLocalRecord?.status === "synced"
+                          ? "Synced"
+                          : "New day")}
                 </span>
               </div>
               <button
@@ -341,7 +487,7 @@ const App = () => {
                 type="submit"
                 disabled={dataStatus === "saving"}
               >
-                {dataStatus === "saving" ? "Saving…" : rowNumber ? "Save changes" : "Create day"}
+                {dataStatus === "saving" ? "Saving…" : rowNumber || selectedLocalRecord ? "Save changes" : "Create day"}
               </button>
             </div>
           </form>

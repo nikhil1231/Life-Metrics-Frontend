@@ -2,6 +2,8 @@
 
 A private, mobile-first React frontend for reading and updating daily entries in the `Main` tab of the **Life Metrics** Google Sheet. The app runs entirely in the browser and writes through the Google Sheets API using the signed-in user's permissions.
 
+Submitted days are saved on the current device before they are sent to Google Sheets. After the app has been opened online once, its shell and previously viewed days remain available offline. Any days submitted while disconnected are marked pending and synchronized when connectivity and a valid Google session return; the device's submitted version overwrites the visible fields for that Sheet date.
+
 ## Local setup
 
 Requirements: Node.js 22 and a Google Cloud project.
@@ -44,6 +46,8 @@ The app uses the existing A:T layout:
 | T | Notes |
 
 Existing rows are updated only in B:M, R, and T. A newly selected date is appended as an A:T row, with the hidden fields left blank and the date/dropdown cell structure applied.
+
+All visible daily values are optional except the date. A nonblank score must be a number from 1 through 10. Clicking an already-selected J or quality option clears it.
 
 ## Tests and production build
 

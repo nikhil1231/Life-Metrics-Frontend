@@ -1,8 +1,17 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { clearSession, readStoredSession, storeSession } from "./auth";
+import {
+  clearPreviouslyAuthorized,
+  clearSession,
+  readPreviouslyAuthorized,
+  readStoredSession,
+  storeSession,
+} from "./auth";
 
 describe("stored Google session", () => {
-  beforeEach(() => clearSession());
+  beforeEach(() => {
+    clearSession();
+    clearPreviouslyAuthorized();
+  });
 
   it("reuses a token that has enough time remaining", () => {
     storeSession({ accessToken: "token", expiresAt: 200_000 });
@@ -18,5 +27,6 @@ describe("stored Google session", () => {
     storeSession({ accessToken: "token", expiresAt: Date.now() + 100_000 });
     clearSession();
     expect(readStoredSession()).toBeNull();
+    expect(readPreviouslyAuthorized()).toBe(true);
   });
 });

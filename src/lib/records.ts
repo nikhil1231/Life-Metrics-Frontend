@@ -38,25 +38,23 @@ export const validateDraft = (
   draft: LifeMetricDraft,
 ): { record: LifeMetricRecord | null; errors: ValidationErrors } => {
   const errors: ValidationErrors = {};
-  const scores = {} as Record<MetricKey, number>;
+  const scores = {} as Record<MetricKey, number | "">;
 
   if (!isValidIsoDate(draft.date)) errors.date = "Choose a valid date.";
 
   METRIC_KEYS.forEach((key) => {
     const rawValue = draft.scores[key].trim();
+    if (rawValue === "") {
+      scores[key] = "";
+      return;
+    }
     const value = Number(rawValue);
-    if (rawValue === "" || !Number.isFinite(value) || value < 1 || value > 10) {
+    if (!Number.isFinite(value) || value < 1 || value > 10) {
       errors[key] = "Enter a number from 1 to 10.";
       return;
     }
     scores[key] = value;
   });
-
-  if (draft.j !== "Y" && draft.j !== "N") errors.j = "Choose Y or N.";
-  if (!QUALITY_VALUES.includes(draft.quality as QualityOfDay)) {
-    errors.quality = "Choose a quality of day.";
-  }
-  if (!draft.notes.trim()) errors.notes = "Add a note for the day.";
 
   if (Object.keys(errors).length > 0) return { record: null, errors };
 
@@ -64,8 +62,8 @@ export const validateDraft = (
     record: {
       date: draft.date,
       scores,
-      j: draft.j as LifeMetricRecord["j"],
-      quality: draft.quality as QualityOfDay,
+      j: draft.j,
+      quality: draft.quality,
       notes: draft.notes.trim(),
     },
     errors,

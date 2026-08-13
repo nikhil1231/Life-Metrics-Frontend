@@ -41,9 +41,9 @@ export type JValue = "Y" | "N";
 
 export type LifeMetricRecord = {
   date: string;
-  scores: Record<MetricKey, number>;
-  j: JValue;
-  quality: QualityOfDay;
+  scores: Record<MetricKey, number | "">;
+  j: JValue | "";
+  quality: QualityOfDay | "";
   notes: string;
 };
 

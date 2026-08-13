@@ -46,6 +46,16 @@ describe("Life Metrics row model", () => {
     expect(result.record?.notes).toBe("Detailed notes.");
   });
 
+  it("accepts blank visible fields and serializes blank cells", () => {
+    const result = validateDraft(createEmptyDraft("2026-08-10"));
+    expect(result.errors).toEqual({});
+    expect(result.record?.scores.discomfort).toBe("");
+    expect(result.record?.j).toBe("");
+    expect(result.record?.quality).toBe("");
+    expect(result.record?.notes).toBe("");
+    expect(recordToFullRow(result.record!, 46244)[1]).toBe("");
+  });
+
   it("rejects blank, non-numeric, and out-of-range values", () => {
     const draft = createEmptyDraft("bad-date");
     draft.scores.discomfort = "0";
@@ -58,6 +68,6 @@ describe("Life Metrics row model", () => {
     expect(result.errors.discomfort).toBeDefined();
     expect(result.errors.meditation).toBeDefined();
     expect(result.errors.diet).toBeDefined();
-    expect(result.errors.notes).toBeDefined();
+    expect(result.errors.notes).toBeUndefined();
   });
 });

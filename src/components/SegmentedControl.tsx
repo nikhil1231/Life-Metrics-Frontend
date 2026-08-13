@@ -5,7 +5,7 @@ type SegmentedControlProps<T extends string> = {
   value: T | "";
   error?: string;
   className?: string;
-  onChange: (value: T) => void;
+  onChange: (value: T | "") => void;
 };
 
 export const SegmentedControl = <T extends string>({
@@ -30,7 +30,8 @@ export const SegmentedControl = <T extends string>({
             name={name}
             value={option}
             checked={value === option}
-            onChange={() => onChange(option)}
+            readOnly
+            onClick={() => onChange(value === option ? "" : option)}
           />
           <span>{option}</span>
         </label>

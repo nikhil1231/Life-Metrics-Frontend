@@ -66,6 +66,19 @@ describe("Google Sheets gateway", () => {
     expect(fetchMock.mock.calls[1][0]).toContain("values:batchUpdate");
   });
 
+  it("upserts by refreshing the date index instead of trusting a cached row", async () => {
+    const values = [[], [], [isoDateToGoogleSerial(record.date)]];
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ values }))
+      .mockResolvedValueOnce(jsonResponse({}));
+    const gateway = createSheetsGateway({ accessToken: "token", spreadsheetId: "sheet", sheetName: "Main", fetchImpl: fetchMock });
+
+    const result = await gateway.upsertRecord(record);
+    expect(result).toEqual({ rowNumber: 3, created: false });
+    expect(fetchMock.mock.calls[1][0]).toContain("values:batchUpdate");
+  });
+
   it("appends a complete row and reapplies date and dropdown structure", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()

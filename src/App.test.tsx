@@ -7,10 +7,11 @@ import { METRIC_KEYS } from "./types";
 
 const mocks = vi.hoisted(() => ({
   auth: {
-    status: "authenticated" as const,
-    accessToken: "token",
+    status: "authenticated" as "authenticated" | "expired",
+    accessToken: "token" as string | null,
     error: null,
     isGoogleReady: true,
+    hasAuthorizedBefore: true,
     connect: vi.fn(),
     signOut: vi.fn(),
     markExpired: vi.fn(),
@@ -20,6 +21,7 @@ const mocks = vi.hoisted(() => ({
     loadRecord: vi.fn(),
     updateRecord: vi.fn(),
     appendRecord: vi.fn(),
+    upsertRecord: vi.fn(),
   },
 }));
 
@@ -45,22 +47,23 @@ import App from "./App";
 describe("Life Metrics app", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.auth.status = "authenticated";
+    mocks.auth.accessToken = "token";
+    mocks.auth.hasAuthorizedBefore = true;
     mocks.gateway.loadRecord.mockResolvedValue({
       draft: createEmptyDraft(getTodayInLondon()),
       rowNumber: null,
     });
+    mocks.gateway.upsertRecord.mockResolvedValue({ rowNumber: 1262, created: false });
   });
 
-  it("shows validation for every required field", async () => {
+  it("allows a completely blank day to be saved", async () => {
     render(<App />);
-    const createButton = await screen.findByRole("button", { name: "Create day" });
+    const createButton = await screen.findByRole("button", { name: /Create day|Save changes/ });
     await userEvent.click(createButton);
 
-    expect(await screen.findAllByText("Enter a number from 1 to 10.")).toHaveLength(11);
-    expect(screen.getByText("Choose Y or N.")).toBeInTheDocument();
-    expect(screen.getByText("Choose a quality of day.")).toBeInTheDocument();
-    expect(screen.getByText("Add a note for the day.")).toBeInTheDocument();
-    expect(mocks.gateway.appendRecord).not.toHaveBeenCalled();
+    await waitFor(() => expect(mocks.gateway.upsertRecord).toHaveBeenCalled());
+    expect(await screen.findByText("All saved days are synced.")).toBeInTheDocument();
   });
 
   it("loads decimals, lets the integer slider replace them, and protects dirty date changes", async () => {
@@ -98,12 +101,40 @@ describe("Life Metrics app", () => {
     draft.quality = "Amazing";
     draft.notes = "Complete notes";
     mocks.gateway.loadRecord.mockResolvedValue({ draft, rowNumber: 1262 });
-    mocks.gateway.updateRecord.mockResolvedValue({ rowNumber: 1262, created: false });
+    mocks.gateway.upsertRecord.mockResolvedValue({ rowNumber: 1262, created: false });
 
     render(<App />);
     await userEvent.click(await screen.findByRole("button", { name: "Save changes" }));
 
-    await waitFor(() => expect(mocks.gateway.updateRecord).toHaveBeenCalledTimes(1));
-    expect(screen.getByText("Changes saved.")).toBeInTheDocument();
+    await waitFor(() => expect(mocks.gateway.upsertRecord).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("All saved days are synced.")).toBeInTheDocument();
+  });
+
+  it("queues a day offline and syncs it when connectivity returns", async () => {
+    vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(false);
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /Create day|Save changes/ }));
+    expect(await screen.findByText("Offline · 1 pending")).toBeInTheDocument();
+    expect(screen.getByText("Saved on this device · waiting to sync")).toBeInTheDocument();
+    expect(mocks.gateway.upsertRecord).not.toHaveBeenCalled();
+
+    vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(true);
+    fireEvent(window, new Event("online"));
+    await waitFor(() => expect(mocks.gateway.upsertRecord).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("All saved days are synced.")).toBeInTheDocument();
+  });
+
+  it("keeps the form available offline after a previous authorization expires", async () => {
+    mocks.auth.status = "expired";
+    mocks.auth.accessToken = null;
+    mocks.auth.hasAuthorizedBefore = true;
+    vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(false);
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Life Metrics" })).toBeInTheDocument();
+    expect(screen.getByText("Offline")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reconnect Google" })).toBeInTheDocument();
   });
 });

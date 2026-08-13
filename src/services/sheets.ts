@@ -11,6 +11,7 @@ export interface SheetGateway {
   loadRecord(date: string): Promise<LoadedRecord>;
   updateRecord(rowNumber: number, record: LifeMetricRecord): Promise<SaveResult>;
   appendRecord(record: LifeMetricRecord): Promise<SaveResult>;
+  upsertRecord(record: LifeMetricRecord): Promise<SaveResult>;
 }
 
 export class SheetsApiError extends Error {
@@ -256,5 +257,7 @@ export const createSheetsGateway = ({
     return { rowNumber, created: true };
   };
 
-  return { loadDateIndex, loadRecord, updateRecord, appendRecord };
+  const upsertRecord = (record: LifeMetricRecord): Promise<SaveResult> => appendRecord(record);
+
+  return { loadDateIndex, loadRecord, updateRecord, appendRecord, upsertRecord };
 };

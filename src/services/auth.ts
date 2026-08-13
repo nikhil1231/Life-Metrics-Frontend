@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const ACCESS_TOKEN_KEY = "life_metrics_google_access_token";
 const TOKEN_EXPIRY_KEY = "life_metrics_google_token_expiry";
+const PREVIOUSLY_AUTHORIZED_KEY = "life_metrics_previously_authorized";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const EXPIRY_BUFFER_MS = 30_000;
 
@@ -22,6 +23,7 @@ export type GoogleAuthState = {
   accessToken: string | null;
   error: string | null;
   isGoogleReady: boolean;
+  hasAuthorizedBefore: boolean;
   connect: () => void;
   signOut: () => void;
   markExpired: () => void;
@@ -39,11 +41,19 @@ export const readStoredSession = (now = Date.now()): StoredSession | null => {
 export const storeSession = (session: StoredSession): void => {
   localStorage.setItem(ACCESS_TOKEN_KEY, session.accessToken);
   localStorage.setItem(TOKEN_EXPIRY_KEY, String(session.expiresAt));
+  localStorage.setItem(PREVIOUSLY_AUTHORIZED_KEY, "true");
 };
 
 export const clearSession = (): void => {
   localStorage.removeItem(ACCESS_TOKEN_KEY);
   localStorage.removeItem(TOKEN_EXPIRY_KEY);
+};
+
+export const readPreviouslyAuthorized = (): boolean =>
+  localStorage.getItem(PREVIOUSLY_AUTHORIZED_KEY) === "true";
+
+export const clearPreviouslyAuthorized = (): void => {
+  localStorage.removeItem(PREVIOUSLY_AUTHORIZED_KEY);
 };
 
 const waitForGoogleIdentity = async (timeoutMs = 10_000): Promise<void> => {
@@ -58,8 +68,11 @@ const waitForGoogleIdentity = async (timeoutMs = 10_000): Promise<void> => {
 
 export const useGoogleAuth = (clientId: string): GoogleAuthState => {
   const initialSessionRef = useRef<StoredSession | null>(readStoredSession());
+  const [hasAuthorizedBefore, setHasAuthorizedBefore] = useState(
+    () => Boolean(initialSessionRef.current) || readPreviouslyAuthorized(),
+  );
   const [status, setStatus] = useState<AuthStatus>(
-    initialSessionRef.current ? "authenticated" : "initializing",
+    initialSessionRef.current ? "authenticated" : readPreviouslyAuthorized() ? "expired" : "initializing",
   );
   const [accessToken, setAccessToken] = useState<string | null>(
     initialSessionRef.current?.accessToken ?? null,
@@ -77,6 +90,11 @@ export const useGoogleAuth = (clientId: string): GoogleAuthState => {
     setExpiresAt(null);
     setError(null);
     setStatus("expired");
+  }, []);
+
+  useEffect(() => {
+    if (!initialSessionRef.current) return;
+    localStorage.setItem(PREVIOUSLY_AUTHORIZED_KEY, "true");
   }, []);
 
   useEffect(() => {
@@ -102,6 +120,7 @@ export const useGoogleAuth = (clientId: string): GoogleAuthState => {
 
             const nextExpiry = Date.now() + (response.expires_in ?? 3600) * 1000;
             storeSession({ accessToken: response.access_token, expiresAt: nextExpiry });
+            setHasAuthorizedBefore(true);
             setAccessToken(response.access_token);
             setExpiresAt(nextExpiry);
             setError(null);
@@ -149,6 +168,8 @@ export const useGoogleAuth = (clientId: string): GoogleAuthState => {
   const signOut = useCallback(() => {
     const tokenToRevoke = accessToken;
     clearSession();
+    clearPreviouslyAuthorized();
+    setHasAuthorizedBefore(false);
     setAccessToken(null);
     setExpiresAt(null);
     setError(null);
@@ -163,6 +184,7 @@ export const useGoogleAuth = (clientId: string): GoogleAuthState => {
     accessToken,
     error,
     isGoogleReady,
+    hasAuthorizedBefore,
     connect,
     signOut,
     markExpired,

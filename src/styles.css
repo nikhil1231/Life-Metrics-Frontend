@@ -58,6 +58,20 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .brand { display: flex; gap: 13px; align-items: center; }
 .brand h1 { font-family: Georgia, serif; font-size: 1.45rem; margin: 2px 0 0; font-weight: 500; }
+.header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.sync-badge {
+  min-height: 30px;
+  padding: 0 11px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(35, 79, 69, 0.16);
+  border-radius: 999px;
+  color: var(--sage);
+  background: var(--sage-light);
+  font-size: 0.75rem;
+  font-weight: 780;
+}
+.sync-badge--offline { color: #7b4d1d; background: #f7e8ce; border-color: rgba(123, 77, 29, 0.14); }
 
 .brand-mark {
   width: 72px;
@@ -183,6 +197,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .status-dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; background: #b6afa4; }
 .status-dot--saving, .status-dot--loading { background: #d39237; animation: pulse 1.2s infinite; }
 .status-dot--saved { background: #3c7a64; }
+.status-dot--pending { background: #d39237; }
+.status-dot--syncing { background: #d39237; animation: pulse 1.2s infinite; }
 .status-dot--error { background: var(--danger); }
 .save-button { min-width: 150px; }
 
@@ -217,6 +233,9 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   .app-header, .content { width: min(100% - 20px, 1080px); }
   .brand h1 { font-size: 1.2rem; }
   .button--quiet { padding-inline: 13px; }
+  .header-actions { align-items: flex-end; flex-direction: column; gap: 3px; }
+  .header-actions .button { min-height: 34px; }
+  .sync-badge { padding-inline: 8px; font-size: 0.68rem; }
   .form-section { padding: 20px 14px; border-radius: 22px; }
   .metric-card { padding-inline: 14px; }
   .save-bar { padding-left: 15px; border-radius: 22px; }

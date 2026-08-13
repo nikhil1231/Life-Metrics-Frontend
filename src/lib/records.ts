@@ -1,4 +1,5 @@
 import { isValidIsoDate } from "./date";
+import { parseNotes, serializeNotes } from "./notes";
 import {
   METRIC_KEYS,
   QUALITY_VALUES,
@@ -64,7 +65,7 @@ export const validateDraft = (
       scores,
       j: draft.j,
       quality: draft.quality,
-      notes: draft.notes.trim(),
+      notes: serializeNotes(parseNotes(draft.notes)),
     },
     errors,
   };

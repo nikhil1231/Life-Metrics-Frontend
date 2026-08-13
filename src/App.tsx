@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MetricField } from "./components/MetricField";
+import { NotesField } from "./components/NotesField";
 import { SegmentedControl } from "./components/SegmentedControl";
 import { APP_CONFIG } from "./config";
 import { formatDisplayDate, getTodayInLondon } from "./lib/date";
@@ -45,6 +46,7 @@ const App = () => {
   const [dataStatus, setDataStatus] = useState<DataStatus>("idle");
   const [fieldErrors, setFieldErrors] = useState<ValidationErrors>({});
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [editingNotesDate, setEditingNotesDate] = useState<string | null>(null);
   const syncRunningRef = useRef(false);
 
   const gateway = useMemo(() => {
@@ -224,6 +226,7 @@ const App = () => {
     setRowNumber(null);
     setFieldErrors({});
     setStatusMessage(null);
+    setEditingNotesDate(null);
   };
 
   const markDraftChanged = () => {
@@ -439,30 +442,21 @@ const App = () => {
                 />
               </div>
 
-              <div className="notes-field">
-                <div className="notes-field__heading">
-                  <label htmlFor="notes">Notes</label>
-                  <span>{draft.notes.length.toLocaleString()} characters</span>
-                </div>
-                <textarea
-                  id="notes"
-                  rows={8}
-                  value={draft.notes}
-                  aria-invalid={Boolean(fieldErrors.notes)}
-                  aria-describedby={fieldErrors.notes ? "notes-error" : "notes-help"}
-                  onChange={(event) => {
-                    setDraft((current) => ({ ...current, notes: event.target.value }));
-                    setFieldErrors((current) => ({ ...current, notes: undefined }));
-                    markDraftChanged();
-                  }}
-                  placeholder="What happened today? Capture the moments, patterns, and details you want to remember…"
-                />
-                {fieldErrors.notes ? (
-                  <p className="field-error" id="notes-error" role="alert">{fieldErrors.notes}</p>
-                ) : (
-                  <p className="field-help" id="notes-help">Optional · Saved directly to column T.</p>
-                )}
-              </div>
+              <NotesField
+                value={draft.notes}
+                error={fieldErrors.notes}
+                isReading={
+                  selectedDate < today &&
+                  draft.notes.trim().length > 0 &&
+                  editingNotesDate !== selectedDate
+                }
+                onEdit={() => setEditingNotesDate(selectedDate)}
+                onChange={(notes) => {
+                  setDraft((current) => ({ ...current, notes }));
+                  setFieldErrors((current) => ({ ...current, notes: undefined }));
+                  markDraftChanged();
+                }}
+              />
             </section>
 
             <div className="save-bar">

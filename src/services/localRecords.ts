@@ -3,6 +3,7 @@ import { METRIC_KEYS, QUALITY_VALUES, type LifeMetricDraft } from "../types";
 
 export const LOCAL_RECORDS_KEY = "life_metrics_local_records_v1";
 const STORAGE_VERSION = 1;
+const SYNCED_RETENTION_MS = 180 * 24 * 60 * 60 * 1_000;
 
 export type LocalRecordStatus = "pending" | "synced";
 
@@ -22,7 +23,7 @@ type StoredRecords = {
 
 const emptyStore = (): StoredRecords => ({ version: STORAGE_VERSION, records: {} });
 
-const isDraft = (value: unknown): value is LifeMetricDraft => {
+export const isDraft = (value: unknown): value is LifeMetricDraft => {
   if (!value || typeof value !== "object") return false;
   const draft = value as Partial<LifeMetricDraft>;
   return (
@@ -75,7 +76,20 @@ export class LocalRecordRepository {
   }
 
   private writeStore(store: StoredRecords): void {
-    this.storage.setItem(LOCAL_RECORDS_KEY, JSON.stringify(store));
+    try {
+      this.storage.setItem(LOCAL_RECORDS_KEY, JSON.stringify(store));
+    } catch (error: unknown) {
+      // Out of room: synced days are already in the sheet, so they are the only
+      // safe thing to drop. Pending days are never pruned.
+      const oldest = this.now() - SYNCED_RETENTION_MS;
+      const records = Object.fromEntries(
+        Object.entries(store.records).filter(
+          ([, record]) => record.status === "pending" || record.updatedAt > oldest,
+        ),
+      );
+      if (Object.keys(records).length === Object.keys(store.records).length) throw error;
+      this.storage.setItem(LOCAL_RECORDS_KEY, JSON.stringify({ version: STORAGE_VERSION, records }));
+    }
   }
 
   list(): Record<string, LocalRecord> {

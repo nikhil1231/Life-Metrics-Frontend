@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+
 import {
+  formatClockTime,
   getTodayInLondon,
   googleSerialToIsoDate,
   isValidIsoDate,
@@ -21,6 +23,10 @@ describe("Google Sheets date conversion", () => {
     expect(isValidIsoDate("2026-02-29")).toBe(false);
     expect(isValidIsoDate("10/08/2026")).toBe(false);
     expect(() => isoDateToGoogleSerial("not-a-date")).toThrow("Invalid ISO date");
+  });
+
+  it("formats an autosave timestamp as a 24-hour clock time", () => {
+    expect(formatClockTime(Date.UTC(2026, 7, 10, 14, 32))).toMatch(/^\d{2}:\d{2}$/);
   });
 
   it("uses Europe/London around the daylight-saving boundary", () => {

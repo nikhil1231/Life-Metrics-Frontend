@@ -52,6 +52,9 @@ export const getTodayInLondon = (now: Date = new Date()): string => {
   return `${value("year")}-${value("month")}-${value("day")}`;
 };
 
+export const formatClockTime = (timestamp: number): string =>
+  new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" }).format(new Date(timestamp));
+
 export const formatDisplayDate = (date: string): string => {
   const parts = parseIsoDate(date);
   if (!parts) return date;

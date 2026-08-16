@@ -3,10 +3,11 @@ import { MetricField } from "./components/MetricField";
 import { NotesField } from "./components/NotesField";
 import { SegmentedControl } from "./components/SegmentedControl";
 import { APP_CONFIG } from "./config";
-import { formatDisplayDate, getTodayInLondon } from "./lib/date";
+import { formatClockTime, formatDisplayDate, getTodayInLondon } from "./lib/date";
 import { createEmptyDraft, draftFingerprint, validateDraft } from "./lib/records";
 import { useGoogleAuth } from "./services/auth";
-import { LocalRecordRepository } from "./services/localRecords";
+import { DraftRepository } from "./services/draftStore";
+import { LOCAL_RECORDS_KEY, LocalRecordRepository } from "./services/localRecords";
 import { createSheetsGateway, SheetsApiError } from "./services/sheets";
 import {
   METRIC_KEYS,
@@ -20,6 +21,12 @@ import {
 } from "./types";
 
 type DataStatus = "idle" | "loading" | "saving" | "saved" | "pending" | "syncing" | "error";
+
+/** How often unsaved edits are written to this device while typing. */
+const AUTOSAVE_INTERVAL_MS = 3_000;
+
+const STORAGE_BLOCKED_MESSAGE =
+  "This device is blocking local saves, so unsaved edits are only held in this tab. Save before you close it.";
 
 const recordAsDraft = (
   record: NonNullable<ReturnType<typeof validateDraft>["record"]>,
@@ -36,6 +43,7 @@ const recordAsDraft = (
 const App = () => {
   const auth = useGoogleAuth(APP_CONFIG.googleClientId);
   const localRepository = useMemo(() => new LocalRecordRepository(), []);
+  const draftRepository = useMemo(() => new DraftRepository(), []);
   const today = getTodayInLondon();
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const [localRecords, setLocalRecords] = useState(() => localRepository.list());
@@ -47,7 +55,18 @@ const App = () => {
   const [fieldErrors, setFieldErrors] = useState<ValidationErrors>({});
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [editingNotesDate, setEditingNotesDate] = useState<string | null>(null);
+  const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
+  const [restoredAt, setRestoredAt] = useState<number | null>(null);
+  const [storageBlocked, setStorageBlocked] = useState(false);
+  const [reloadNonce, setReloadNonce] = useState(0);
   const syncRunningRef = useRef(false);
+  const silentReconnectAttemptedRef = useRef(false);
+  const autosaveTimerRef = useRef<number | null>(null);
+  const hydratedDateRef = useRef<string | null>(null);
+  const draftRef = useRef(draft);
+  const baselineRef = useRef(baseline);
+  const rowNumberRef = useRef(rowNumber);
+  const isDirtyRef = useRef(false);
 
   const gateway = useMemo(() => {
     if (!auth.accessToken || APP_CONFIG.errors.length > 0) return null;
@@ -63,9 +82,48 @@ const App = () => {
   const pendingCount = Object.values(localRecords).filter((record) => record.status === "pending").length;
   const canUseApp = auth.status === "authenticated" || auth.hasAuthorizedBefore;
 
+  useEffect(() => {
+    draftRef.current = draft;
+    baselineRef.current = baseline;
+    rowNumberRef.current = rowNumber;
+    isDirtyRef.current = isDirty;
+  });
+
   const refreshLocalRecords = useCallback(() => {
     setLocalRecords(localRepository.list());
   }, [localRepository]);
+
+  const cancelScheduledAutosave = useCallback(() => {
+    if (autosaveTimerRef.current === null) return;
+    window.clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = null;
+  }, []);
+
+  /** Writes the current unsaved edits to this device, or clears them if there are none. */
+  const persistDraft = useCallback(() => {
+    cancelScheduledAutosave();
+    try {
+      const entry = draftRepository.save(draftRef.current, baselineRef.current, rowNumberRef.current);
+      setDraftSavedAt(entry?.updatedAt ?? null);
+      setStorageBlocked(false);
+    } catch {
+      setStorageBlocked(true);
+    }
+  }, [cancelScheduledAutosave, draftRepository]);
+
+  const forgetDraft = useCallback(
+    (date: string) => {
+      cancelScheduledAutosave();
+      try {
+        draftRepository.remove(date);
+      } catch {
+        // Nothing more to do: the sheet already has this day.
+      }
+      setDraftSavedAt(null);
+      setRestoredAt(null);
+    },
+    [cancelScheduledAutosave, draftRepository],
+  );
 
   const handleSheetsError = useCallback(
     (error: unknown) => {
@@ -147,33 +205,77 @@ const App = () => {
   }, [auth.status, gateway, isOnline, pendingCount, syncPendingRecords]);
 
   useEffect(() => {
+    if (auth.status === "authenticated") {
+      silentReconnectAttemptedRef.current = false;
+      return;
+    }
+    if (
+      auth.status === "expired" &&
+      auth.isGoogleReady &&
+      isOnline &&
+      !silentReconnectAttemptedRef.current
+    ) {
+      silentReconnectAttemptedRef.current = true;
+      auth.connect();
+    }
+  }, [auth.status, auth.isGoogleReady, auth.connect, isOnline]);
+
+  useEffect(() => {
     if (!canUseApp) return;
     let active = true;
-    setFieldErrors({});
 
+    const stashed = draftRepository.get(selectedDate);
     const local = localRepository.get(selectedDate);
+    // This effect re-runs whenever the token refreshes or connectivity flips, so
+    // it must never overwrite edits the user has in front of them.
+    const hasUnsavedEdits = Boolean(stashed) || isDirtyRef.current;
+    const isNewDate = hydratedDateRef.current !== selectedDate;
+
+    if (isNewDate) {
+      hydratedDateRef.current = selectedDate;
+      setFieldErrors({});
+      if (stashed) {
+        setDraft(stashed.draft);
+        setBaseline(stashed.baseline);
+        setRowNumber(stashed.rowNumber ?? local?.rowNumber ?? null);
+        setDraftSavedAt(stashed.updatedAt);
+        setRestoredAt(stashed.updatedAt);
+        // Notes for a past day open in reading mode; a restored edit stays editable.
+        if (stashed.draft.notes.trim().length > 0) setEditingNotesDate(selectedDate);
+      } else {
+        const nextDraft = local?.draft ?? createEmptyDraft(selectedDate);
+        setDraft(nextDraft);
+        setBaseline(draftFingerprint(nextDraft));
+        setRowNumber(local?.rowNumber ?? null);
+        setDraftSavedAt(null);
+        setRestoredAt(null);
+      }
+    }
+
     if (local?.status === "pending" || !gateway || !isOnline) {
-      const nextDraft = local?.draft ?? createEmptyDraft(selectedDate);
-      setDraft(nextDraft);
-      setBaseline(draftFingerprint(nextDraft));
-      setRowNumber(local?.rowNumber ?? null);
       setDataStatus(local?.status === "pending" ? "pending" : "idle");
-      setStatusMessage(
-        local?.status === "pending"
-          ? !isOnline
-            ? "Saved on this device · waiting to sync"
-            : !gateway
-              ? "Saved on this device · reconnect Google to sync"
-              : "Saved on this device · waiting to sync"
-          : !isOnline
-            ? "Offline · using data on this device"
-            : "On-device data · reconnect Google to refresh",
-      );
+      if (!hasUnsavedEdits) {
+        setStatusMessage(
+          local?.status === "pending"
+            ? !isOnline
+              ? "Saved on this device · waiting to sync"
+              : !gateway
+                ? "Saved on this device · reconnect Google to sync"
+                : "Saved on this device · waiting to sync"
+            : !isOnline
+              ? "Offline · using data on this device"
+              : "On-device data · reconnect Google to refresh",
+        );
+      }
       return;
     }
 
-    setDataStatus("loading");
-    setStatusMessage(null);
+    // Only block the form behind a spinner on a genuinely cold load; a refresh
+    // that happens while the user is editing stays in the background.
+    if (isNewDate && !hasUnsavedEdits) {
+      setDataStatus("loading");
+      setStatusMessage(null);
+    }
 
     gateway
       .loadRecord(selectedDate)
@@ -181,20 +283,25 @@ const App = () => {
         if (!active) return;
         const cached = localRepository.cacheSynced(loaded.draft, loaded.rowNumber);
         refreshLocalRecords();
+        setRowNumber(cached.rowNumber);
+        if (isDirtyRef.current) {
+          setDataStatus((current) => (current === "loading" ? "idle" : current));
+          return;
+        }
         setDraft(cached.draft);
         setBaseline(draftFingerprint(cached.draft));
-        setRowNumber(cached.rowNumber);
         setDataStatus(cached.status === "pending" ? "pending" : "idle");
       })
       .catch((error: unknown) => {
         if (!active) return;
         const fallback = localRepository.get(selectedDate);
         if (error instanceof SheetsApiError && error.code === "network") {
+          setDataStatus(fallback?.status === "pending" ? "pending" : "idle");
+          if (isDirtyRef.current) return;
           const nextDraft = fallback?.draft ?? createEmptyDraft(selectedDate);
           setDraft(nextDraft);
           setBaseline(draftFingerprint(nextDraft));
           setRowNumber(fallback?.rowNumber ?? null);
-          setDataStatus(fallback?.status === "pending" ? "pending" : "idle");
           setStatusMessage("Could not reach Google Sheets · using data on this device");
           return;
         }
@@ -204,21 +311,77 @@ const App = () => {
     return () => {
       active = false;
     };
-  }, [canUseApp, gateway, handleSheetsError, isOnline, localRepository, refreshLocalRecords, selectedDate]);
+  }, [
+    canUseApp,
+    draftRepository,
+    gateway,
+    handleSheetsError,
+    isOnline,
+    localRepository,
+    refreshLocalRecords,
+    reloadNonce,
+    selectedDate,
+  ]);
 
   useEffect(() => {
-    if (!isDirty) return;
+    if (!isDirty) {
+      cancelScheduledAutosave();
+      if (draftSavedAt !== null) forgetDraft(draft.date);
+      return;
+    }
+    if (autosaveTimerRef.current !== null) return;
+    autosaveTimerRef.current = window.setTimeout(() => {
+      autosaveTimerRef.current = null;
+      persistDraft();
+    }, AUTOSAVE_INTERVAL_MS);
+  }, [cancelScheduledAutosave, draft, draftSavedAt, forgetDraft, isDirty, persistDraft]);
+
+  useEffect(() => cancelScheduledAutosave, [cancelScheduledAutosave]);
+
+  // Backgrounding a tab on mobile can discard it without warning, so write
+  // immediately whenever the page stops being visible.
+  useEffect(() => {
+    const flush = () => {
+      if (isDirtyRef.current) persistDraft();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("blur", flush);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("blur", flush);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [persistDraft]);
+
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== LOCAL_RECORDS_KEY) return;
+      refreshLocalRecords();
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [refreshLocalRecords]);
+
+  // Edits normally survive a close, so only warn when this device refuses to keep them.
+  useEffect(() => {
+    if (!isDirty || !storageBlocked) return;
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      persistDraft();
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [isDirty]);
+  }, [isDirty, persistDraft, storageBlocked]);
 
   const changeDate = (nextDate: string) => {
     if (!nextDate || nextDate === selectedDate) return;
-    if (isDirty && !window.confirm("Discard your unsaved changes and load another date?")) return;
+    // Keep this day's unsaved edits so they are waiting when the user comes back.
+    if (isDirty) persistDraft();
     const empty = createEmptyDraft(nextDate);
     setSelectedDate(nextDate);
     setDraft(empty);
@@ -227,6 +390,15 @@ const App = () => {
     setFieldErrors({});
     setStatusMessage(null);
     setEditingNotesDate(null);
+    setDraftSavedAt(null);
+    setRestoredAt(null);
+  };
+
+  const discardRestoredDraft = () => {
+    if (!window.confirm("Discard the unsaved changes kept for this day?")) return;
+    forgetDraft(selectedDate);
+    hydratedDateRef.current = null;
+    setReloadNonce((current) => current + 1);
   };
 
   const markDraftChanged = () => {
@@ -260,6 +432,8 @@ const App = () => {
       const savedDraft = recordAsDraft(record);
       localRepository.savePending(savedDraft, rowNumber);
       refreshLocalRecords();
+      forgetDraft(savedDraft.date);
+      setStorageBlocked(false);
       setDraft(savedDraft);
       setBaseline(draftFingerprint(savedDraft));
       setFieldErrors({});
@@ -267,6 +441,8 @@ const App = () => {
       setStatusMessage("Saved on this device · waiting to sync");
       if (gateway && isOnline) void syncPendingRecords();
     } catch (error: unknown) {
+      // The save failed, so these edits still only exist in the form.
+      persistDraft();
       setDataStatus("error");
       setStatusMessage(
         error instanceof Error ? error.message : "This device could not save your day locally.",
@@ -378,6 +554,22 @@ const App = () => {
           </div>
         </section>
 
+        {restoredAt !== null && (
+          <div className="notice notice--restored" role="status">
+            <span>
+              Picked up where you left off — unsaved changes from {formatClockTime(restoredAt)} are back in
+              the form.
+            </span>
+            <button className="button button--quiet" type="button" onClick={discardRestoredDraft}>
+              Discard them
+            </button>
+          </div>
+        )}
+
+        {storageBlocked && (
+          <p className="notice notice--error" role="alert">{STORAGE_BLOCKED_MESSAGE}</p>
+        )}
+
         {dataStatus === "loading" ? (
           <section className="loading-panel" aria-live="polite">
             <span className="spinner" aria-hidden="true" />
@@ -468,7 +660,9 @@ const App = () => {
                 <span>
                   {statusMessage ||
                     (isDirty
-                      ? "Unsaved changes"
+                      ? draftSavedAt !== null
+                        ? `Unsaved changes · kept on this device at ${formatClockTime(draftSavedAt)}`
+                        : "Unsaved changes"
                       : selectedLocalRecord?.status === "pending"
                         ? "Saved on this device · waiting to sync"
                         : rowNumber || selectedLocalRecord?.status === "synced"

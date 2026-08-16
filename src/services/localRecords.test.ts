@@ -39,6 +39,30 @@ describe("local record repository", () => {
     expect(new LocalRecordRepository().list()).toEqual({});
   });
 
+  it("drops long-synced days rather than losing a pending one when storage is full", () => {
+    const values = new Map<string, string>();
+    let full = false;
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        if (full && value.length > 1_200) throw new Error("Storage is full.");
+        values.set(key, value);
+      },
+    } as unknown as Storage;
+
+    const yearMs = 365 * 24 * 60 * 60 * 1_000;
+    let now = 0;
+    const repository = new LocalRecordRepository(storage, () => now);
+    repository.cacheSynced(createEmptyDraft("2024-01-01"), 10);
+    repository.cacheSynced(createEmptyDraft("2024-01-02"), 11);
+    now = yearMs;
+    full = true;
+    repository.savePending(createEmptyDraft("2026-08-10"), null);
+
+    expect(Object.keys(repository.list())).toEqual(["2026-08-10"]);
+    expect(repository.pending()).toHaveLength(1);
+  });
+
   it("surfaces local storage write failures", () => {
     const storage = {
       getItem: () => null,

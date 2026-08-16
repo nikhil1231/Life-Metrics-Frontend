@@ -278,6 +278,19 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .config-errors { text-align: left; margin: 22px 0 0; padding: 16px 16px 16px 34px; color: var(--danger); background: #fff2ef; border-radius: 12px; }
 .notice { padding: 11px 13px; border-radius: 12px; font-size: 0.84rem; }
 .notice--error { color: var(--danger); background: #fff2ef; }
+.notice--restored {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding: 12px 12px 12px 16px;
+  color: var(--sage);
+  background: var(--sage-light);
+  border: 1px solid rgba(35, 79, 69, 0.14);
+  line-height: 1.45;
+}
+.notice--restored .button { flex: 0 0 auto; min-height: 38px; color: var(--sage); border-color: rgba(35, 79, 69, 0.22); }
 .loading-panel { min-height: 420px; display: grid; place-content: center; justify-items: center; color: var(--muted); }
 .spinner { width: 36px; height: 36px; border: 3px solid var(--line); border-top-color: var(--sage); border-radius: 50%; animation: spin 850ms linear infinite; }
 

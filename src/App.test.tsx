@@ -66,7 +66,7 @@ describe("Life Metrics app", () => {
     expect(await screen.findByText("All saved days are synced.")).toBeInTheDocument();
   });
 
-  it("loads decimals, lets the integer slider replace them, and protects dirty date changes", async () => {
+  it("loads decimals and lets the integer slider replace them", async () => {
     const today = getTodayInLondon();
     const draft = createEmptyDraft(today);
     METRIC_KEYS.forEach((key) => {
@@ -77,7 +77,6 @@ describe("Life Metrics app", () => {
     draft.quality = "Good";
     draft.notes = "Existing notes";
     mocks.gateway.loadRecord.mockResolvedValue({ draft, rowNumber: 1262 });
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
 
     render(<App />);
     const numberInput = await screen.findByLabelText("Discomfort");
@@ -85,11 +84,6 @@ describe("Life Metrics app", () => {
 
     fireEvent.change(screen.getByLabelText("Discomfort integer slider"), { target: { value: "8" } });
     expect(numberInput).toHaveValue("8");
-
-    const dateInput = screen.getByLabelText("Select date");
-    fireEvent.change(dateInput, { target: { value: "2000-01-01" } });
-    expect(confirm).toHaveBeenCalled();
-    expect(dateInput).toHaveValue(today);
   });
 
   it("updates an existing row and reports success", async () => {
@@ -123,6 +117,84 @@ describe("Life Metrics app", () => {
     fireEvent(window, new Event("online"));
     await waitFor(() => expect(mocks.gateway.upsertRecord).toHaveBeenCalledTimes(1));
     expect(await screen.findByText("All saved days are synced.")).toBeInTheDocument();
+  });
+
+  it("keeps unsaved edits when the page goes away and restores them on the next visit", async () => {
+    const { unmount } = render(<App />);
+    await screen.findByLabelText("Discomfort");
+    fireEvent.change(screen.getByLabelText("Discomfort integer slider"), { target: { value: "8" } });
+    fireEvent.change(screen.getByLabelText("Moment 1"), { target: { value: "Half-written thought" } });
+
+    fireEvent(window, new Event("pagehide"));
+    unmount();
+
+    render(<App />);
+    expect(await screen.findByLabelText("Discomfort")).toHaveValue("8");
+    expect(screen.getByLabelText("Moment 1")).toHaveValue("Half-written thought");
+    expect(screen.getByText(/unsaved changes from/i)).toBeInTheDocument();
+  });
+
+  it("autosaves unsaved edits on an interval without any page event", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { unmount } = render(<App />);
+      await screen.findByLabelText("Discomfort");
+      fireEvent.change(screen.getByLabelText("Discomfort integer slider"), { target: { value: "4" } });
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      unmount();
+
+      render(<App />);
+      expect(await screen.findByLabelText("Discomfort")).toHaveValue("4");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let a background refresh overwrite edits in progress", async () => {
+    render(<App />);
+    await screen.findByLabelText("Discomfort");
+    fireEvent.change(screen.getByLabelText("Discomfort integer slider"), { target: { value: "9" } });
+
+    vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(false);
+    fireEvent(window, new Event("offline"));
+    vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(true);
+    fireEvent(window, new Event("online"));
+
+    await waitFor(() => expect(mocks.gateway.loadRecord.mock.calls.length).toBeGreaterThan(1));
+    expect(screen.getByLabelText("Discomfort")).toHaveValue("9");
+  });
+
+  it("carries unsaved edits across a date change and back", async () => {
+    const today = getTodayInLondon();
+    const confirm = vi.spyOn(window, "confirm");
+    render(<App />);
+    await screen.findByLabelText("Discomfort");
+    fireEvent.change(screen.getByLabelText("Discomfort integer slider"), { target: { value: "7" } });
+
+    const dateInput = screen.getByLabelText("Select date");
+    fireEvent.change(dateInput, { target: { value: "2026-01-02" } });
+    expect(confirm).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByLabelText("Discomfort")).toHaveValue(""));
+
+    fireEvent.change(dateInput, { target: { value: today } });
+    await waitFor(() => expect(screen.getByLabelText("Discomfort")).toHaveValue("7"));
+  });
+
+  it("drops the restored draft when the user discards it", async () => {
+    const { unmount } = render(<App />);
+    await screen.findByLabelText("Discomfort");
+    fireEvent.change(screen.getByLabelText("Discomfort integer slider"), { target: { value: "6" } });
+    fireEvent(window, new Event("pagehide"));
+    unmount();
+
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<App />);
+    expect(await screen.findByLabelText("Discomfort")).toHaveValue("6");
+    await userEvent.click(screen.getByRole("button", { name: "Discard them" }));
+
+    await waitFor(() => expect(screen.getByLabelText("Discomfort")).toHaveValue(""));
+    expect(screen.queryByText(/unsaved changes from/i)).not.toBeInTheDocument();
   });
 
   it("keeps the form available offline after a previous authorization expires", async () => {

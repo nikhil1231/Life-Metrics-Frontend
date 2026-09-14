@@ -6,7 +6,7 @@ type GoogleTokenResponse = {
 };
 
 type GoogleTokenClient = {
-  requestAccessToken: (options?: { prompt?: string }) => void;
+  requestAccessToken: (options?: { prompt?: string; login_hint?: string }) => void;
 };
 
 interface Window {

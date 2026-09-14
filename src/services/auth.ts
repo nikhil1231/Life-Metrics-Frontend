@@ -4,6 +4,7 @@ const ACCESS_TOKEN_KEY = "life_metrics_google_access_token";
 const TOKEN_EXPIRY_KEY = "life_metrics_google_token_expiry";
 const PREVIOUSLY_AUTHORIZED_KEY = "life_metrics_previously_authorized";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
+const GOOGLE_LOGIN_HINT = "nikhilkunde1231@gmail.com";
 const EXPIRY_BUFFER_MS = 30_000;
 
 type StoredSession = {
@@ -162,7 +163,10 @@ export const useGoogleAuth = (clientId: string): GoogleAuthState => {
       return;
     }
     setError(null);
-    tokenClientRef.current.requestAccessToken({ prompt: "" });
+    tokenClientRef.current.requestAccessToken({
+      prompt: "",
+      login_hint: GOOGLE_LOGIN_HINT,
+    });
   }, []);
 
   const signOut = useCallback(() => {

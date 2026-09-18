@@ -26,6 +26,7 @@ export type GoogleAuthState = {
   isGoogleReady: boolean;
   hasAuthorizedBefore: boolean;
   connect: () => void;
+  reconnectIfExpired: () => void;
   signOut: () => void;
   markExpired: () => void;
 };
@@ -84,6 +85,7 @@ export const useGoogleAuth = (clientId: string): GoogleAuthState => {
   const [error, setError] = useState<string | null>(null);
   const [isGoogleReady, setIsGoogleReady] = useState(false);
   const tokenClientRef = useRef<GoogleTokenClient | null>(null);
+  const requestInFlightRef = useRef(false);
 
   const markExpired = useCallback(() => {
     clearSession();
@@ -113,6 +115,7 @@ export const useGoogleAuth = (clientId: string): GoogleAuthState => {
           client_id: clientId,
           scope: SHEETS_SCOPE,
           callback: (response) => {
+            requestInFlightRef.current = false;
             if (response.error || !response.access_token) {
               setError(response.error_description || response.error || "Google authorization failed.");
               setStatus("error");
@@ -128,6 +131,7 @@ export const useGoogleAuth = (clientId: string): GoogleAuthState => {
             setStatus("authenticated");
           },
           error_callback: () => {
+            requestInFlightRef.current = false;
             setError("The Google authorization window was closed or blocked.");
             setStatus((current) => (current === "authenticated" ? current : "error"));
           },
@@ -163,11 +167,29 @@ export const useGoogleAuth = (clientId: string): GoogleAuthState => {
       return;
     }
     setError(null);
+    requestInFlightRef.current = true;
     tokenClientRef.current.requestAccessToken({
       prompt: "",
       login_hint: GOOGLE_LOGIN_HINT,
     });
   }, []);
+
+  /**
+   * Requests a fresh token only if the current one has lapsed. The background
+   * expiry timer just flips the status; this is what actually opens Google,
+   * so callers decide when the user is around to see it.
+   */
+  const reconnectIfExpired = useCallback(() => {
+    if (!tokenClientRef.current || requestInFlightRef.current) return;
+    // Timers are throttled in background tabs and paused while a laptop sleeps,
+    // so check the clock rather than trusting the status alone.
+    const lapsed =
+      status === "expired" ||
+      (status === "authenticated" && (!expiresAt || expiresAt - Date.now() <= EXPIRY_BUFFER_MS));
+    if (!lapsed) return;
+    if (status === "authenticated") markExpired();
+    connect();
+  }, [connect, expiresAt, markExpired, status]);
 
   const signOut = useCallback(() => {
     const tokenToRevoke = accessToken;
@@ -190,6 +212,7 @@ export const useGoogleAuth = (clientId: string): GoogleAuthState => {
     isGoogleReady,
     hasAuthorizedBefore,
     connect,
+    reconnectIfExpired,
     signOut,
     markExpired,
   };

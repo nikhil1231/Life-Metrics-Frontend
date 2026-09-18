@@ -60,7 +60,7 @@ const App = () => {
   const [storageBlocked, setStorageBlocked] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
   const syncRunningRef = useRef(false);
-  const silentReconnectAttemptedRef = useRef(false);
+  const initialReconnectCheckedRef = useRef(false);
   const autosaveTimerRef = useRef<number | null>(null);
   const hydratedDateRef = useRef<string | null>(null);
   const draftRef = useRef(draft);
@@ -204,21 +204,21 @@ const App = () => {
     }
   }, [auth.status, gateway, isOnline, pendingCount, syncPendingRecords]);
 
+  // Only refresh a lapsed Google session when the user comes back to the tab. A
+  // tab left open all day would otherwise throw up a Google popup every hour.
   useEffect(() => {
-    if (auth.status === "authenticated") {
-      silentReconnectAttemptedRef.current = false;
-      return;
-    }
-    if (
-      auth.status === "expired" &&
-      auth.isGoogleReady &&
-      isOnline &&
-      !silentReconnectAttemptedRef.current
-    ) {
-      silentReconnectAttemptedRef.current = true;
-      auth.connect();
-    }
-  }, [auth.status, auth.isGoogleReady, auth.connect, isOnline]);
+    if (!isOnline) return;
+    const handleFocus = () => auth.reconnectIfExpired();
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [auth.reconnectIfExpired, isOnline]);
+
+  // Opening the app counts as coming back to it, but there is no focus event on load.
+  useEffect(() => {
+    if (initialReconnectCheckedRef.current || !auth.isGoogleReady || !isOnline) return;
+    initialReconnectCheckedRef.current = true;
+    if (document.hasFocus()) auth.reconnectIfExpired();
+  }, [auth.isGoogleReady, auth.reconnectIfExpired, isOnline]);
 
   useEffect(() => {
     if (!canUseApp) return;

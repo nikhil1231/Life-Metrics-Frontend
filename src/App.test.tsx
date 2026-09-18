@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     isGoogleReady: true,
     hasAuthorizedBefore: true,
     connect: vi.fn(),
+    reconnectIfExpired: vi.fn(),
     signOut: vi.fn(),
     markExpired: vi.fn(),
   },
@@ -195,6 +196,27 @@ describe("Life Metrics app", () => {
 
     await waitFor(() => expect(screen.getByLabelText("Discomfort")).toHaveValue(""));
     expect(screen.queryByText(/unsaved changes from/i)).not.toBeInTheDocument();
+  });
+
+  it("only checks the Google session when the tab regains focus", async () => {
+    mocks.auth.status = "expired";
+    mocks.auth.accessToken = null;
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Life Metrics" });
+    expect(mocks.auth.reconnectIfExpired).not.toHaveBeenCalled();
+    expect(mocks.auth.connect).not.toHaveBeenCalled();
+
+    fireEvent(window, new Event("focus"));
+    expect(mocks.auth.reconnectIfExpired).toHaveBeenCalledTimes(1);
+  });
+
+  it("checks the Google session when the app is opened in a focused tab", async () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    render(<App />);
+    await screen.findByRole("heading", { name: "Life Metrics" });
+    expect(mocks.auth.reconnectIfExpired).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the form available offline after a previous authorization expires", async () => {

@@ -40,16 +40,17 @@ export const googleSerialToIsoDate = (serial: number): string => {
   ].join("-");
 };
 
-export const getTodayInLondon = (now: Date = new Date()): string => {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/London",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(now);
-  const value = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((part) => part.type === type)?.value ?? "";
-  return `${value("year")}-${value("month")}-${value("day")}`;
+const DAY_ROLLOVER_HOUR = 6;
+
+/** "Today" in the local time zone, where the day only rolls over at 06:00 rather than midnight. */
+export const getToday = (now: Date = new Date()): string => {
+  const day = now.getDate() - (now.getHours() < DAY_ROLLOVER_HOUR ? 1 : 0);
+  const start = new Date(now.getFullYear(), now.getMonth(), day);
+  return [
+    start.getFullYear(),
+    String(start.getMonth() + 1).padStart(2, "0"),
+    String(start.getDate()).padStart(2, "0"),
+  ].join("-");
 };
 
 export const formatClockTime = (timestamp: number): string =>
@@ -64,6 +65,6 @@ export const formatDisplayDate = (date: string): string => {
     day: "numeric",
     month: "long",
     year: "numeric",
-    timeZone: "Europe/London",
+    timeZone: "UTC",
   }).format(new Date(Date.UTC(year, month - 1, day, 12)));
 };

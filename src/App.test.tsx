@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getTodayInLondon } from "./lib/date";
+import { getToday } from "./lib/date";
 import { createEmptyDraft } from "./lib/records";
 import { METRIC_KEYS } from "./types";
 
@@ -52,7 +52,7 @@ describe("Life Metrics app", () => {
     mocks.auth.accessToken = "token";
     mocks.auth.hasAuthorizedBefore = true;
     mocks.gateway.loadRecord.mockResolvedValue({
-      draft: createEmptyDraft(getTodayInLondon()),
+      draft: createEmptyDraft(getToday()),
       rowNumber: null,
     });
     mocks.gateway.upsertRecord.mockResolvedValue({ rowNumber: 1262, created: false });
@@ -68,7 +68,7 @@ describe("Life Metrics app", () => {
   });
 
   it("loads decimals and lets the integer slider replace them", async () => {
-    const today = getTodayInLondon();
+    const today = getToday();
     const draft = createEmptyDraft(today);
     METRIC_KEYS.forEach((key) => {
       draft.scores[key] = "6";
@@ -88,7 +88,7 @@ describe("Life Metrics app", () => {
   });
 
   it("updates an existing row and reports success", async () => {
-    const draft = createEmptyDraft(getTodayInLondon());
+    const draft = createEmptyDraft(getToday());
     METRIC_KEYS.forEach((key) => {
       draft.scores[key] = "5.5";
     });
@@ -167,7 +167,7 @@ describe("Life Metrics app", () => {
   });
 
   it("carries unsaved edits across a date change and back", async () => {
-    const today = getTodayInLondon();
+    const today = getToday();
     const confirm = vi.spyOn(window, "confirm");
     render(<App />);
     await screen.findByLabelText("Discomfort");

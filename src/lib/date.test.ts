@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatClockTime,
-  getTodayInLondon,
+  getToday,
   googleSerialToIsoDate,
   isValidIsoDate,
   isoDateToGoogleSerial,
@@ -29,8 +29,11 @@ describe("Google Sheets date conversion", () => {
     expect(formatClockTime(Date.UTC(2026, 7, 10, 14, 32))).toMatch(/^\d{2}:\d{2}$/);
   });
 
-  it("uses Europe/London around the daylight-saving boundary", () => {
-    expect(getTodayInLondon(new Date("2026-03-29T00:30:00Z"))).toBe("2026-03-29");
-    expect(getTodayInLondon(new Date("2026-03-29T23:30:00Z"))).toBe("2026-03-30");
+  it("rolls the day over at 06:00 local time, not midnight", () => {
+    expect(getToday(new Date(2026, 7, 11, 0, 30))).toBe("2026-08-10");
+    expect(getToday(new Date(2026, 7, 11, 5, 59))).toBe("2026-08-10");
+    expect(getToday(new Date(2026, 7, 11, 6, 0))).toBe("2026-08-11");
+    expect(getToday(new Date(2026, 0, 1, 2, 0))).toBe("2025-12-31");
+    expect(getToday(new Date(2026, 2, 1, 3, 0))).toBe("2026-02-28");
   });
 });

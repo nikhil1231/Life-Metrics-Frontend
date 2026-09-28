@@ -3,7 +3,7 @@ import { MetricField } from "./components/MetricField";
 import { NotesField } from "./components/NotesField";
 import { SegmentedControl } from "./components/SegmentedControl";
 import { APP_CONFIG } from "./config";
-import { formatClockTime, formatDisplayDate, getTodayInLondon } from "./lib/date";
+import { formatClockTime, formatDisplayDate, getToday } from "./lib/date";
 import { createEmptyDraft, draftFingerprint, validateDraft } from "./lib/records";
 import { useGoogleAuth } from "./services/auth";
 import { DraftRepository } from "./services/draftStore";
@@ -44,7 +44,7 @@ const App = () => {
   const auth = useGoogleAuth(APP_CONFIG.googleClientId);
   const localRepository = useMemo(() => new LocalRecordRepository(), []);
   const draftRepository = useMemo(() => new DraftRepository(), []);
-  const today = getTodayInLondon();
+  const today = getToday();
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const [localRecords, setLocalRecords] = useState(() => localRepository.list());
   const [selectedDate, setSelectedDate] = useState(today);

@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
     updateRecord: vi.fn(),
     appendRecord: vi.fn(),
     upsertRecord: vi.fn(),
+    loadSuggestion: vi.fn(),
   },
 }));
 
@@ -56,6 +57,57 @@ describe("Life Metrics app", () => {
       rowNumber: null,
     });
     mocks.gateway.upsertRecord.mockResolvedValue({ rowNumber: 1262, created: false });
+    mocks.gateway.loadSuggestion.mockResolvedValue(null);
+  });
+
+  it("shows the coach's suggestions as placeholders and only fills them in when asked", async () => {
+    const today = getToday();
+    const draft = createEmptyDraft(today);
+    draft.scores.mood = "7";
+    mocks.gateway.loadRecord.mockResolvedValue({ draft, rowNumber: 1262 });
+    mocks.gateway.loadSuggestion.mockResolvedValue({
+      date: today,
+      updatedAt: `${today} 21:30`,
+      scores: { sleep: 8, exercise: 6, mood: 3 },
+      reasons: { sleep: "Oura sleep score 82", exercise: "Climbing 1h30", diet: "eating out ×1" },
+      notes: "Climbing 1h30 · Dinner with Sam",
+    });
+    render(<App />);
+
+    const sleep = await screen.findByLabelText("Sleep");
+    await waitFor(() => expect(sleep).toHaveAttribute("placeholder", "8"));
+    expect(sleep).toHaveValue("");
+    expect(screen.getByText(/Suggested 8 · Oura sleep score 82/)).toBeInTheDocument();
+    expect(screen.getByText("eating out ×1")).toBeInTheDocument();
+    expect(screen.getByLabelText("Mood")).toHaveValue("7");          // a filled field keeps its value
+    expect(screen.queryByText(/Suggested 3/)).not.toBeInTheDocument();
+    expect(screen.getByText(/updated 21:30/)).toBeInTheDocument();
+    expect(mocks.gateway.upsertRecord).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Use the suggested Exercise score, 6" }));
+    expect(screen.getByLabelText("Exercise")).toHaveValue("6");
+    await userEvent.click(screen.getByRole("button", { name: "Use all 1" }));
+    expect(sleep).toHaveValue("8");
+    expect(screen.getByLabelText("Mood")).toHaveValue("7");
+    expect(screen.queryByText(/Suggestions from your day/)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Add to notes" }));
+    expect(screen.queryByText("From your day")).not.toBeInTheDocument();
+    expect(mocks.gateway.upsertRecord).not.toHaveBeenCalled();     // nothing is saved until you save
+
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(mocks.gateway.upsertRecord).toHaveBeenCalled());
+    const saved = mocks.gateway.upsertRecord.mock.calls[0][0];
+    expect(saved.scores).toMatchObject({ sleep: 8, exercise: 6, mood: 7 });
+    expect(saved.notes).toBe("Climbing 1h30 · Dinner with Sam");
+  });
+
+  it("works normally when suggestions can't be loaded", async () => {
+    mocks.gateway.loadSuggestion.mockRejectedValue(new Error("nope"));
+    render(<App />);
+    const sleep = await screen.findByLabelText("Sleep");
+    expect(sleep).toHaveAttribute("placeholder", "—");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("allows a completely blank day to be saved", async () => {

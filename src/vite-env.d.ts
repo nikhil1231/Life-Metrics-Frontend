@@ -5,6 +5,7 @@ interface ImportMetaEnv {
   readonly VITE_GOOGLE_CLIENT_ID?: string;
   readonly VITE_SPREADSHEET_ID?: string;
   readonly VITE_SHEET_NAME?: string;
+  readonly VITE_SUGGESTIONS_SHEET_NAME?: string;
 }
 
 interface ImportMeta {

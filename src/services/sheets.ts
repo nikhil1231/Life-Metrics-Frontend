@@ -1,6 +1,13 @@
 import { isoDateToGoogleSerial } from "../lib/date";
 import { createEmptyDraft, recordToFullRow, rowToDraft } from "../lib/records";
-import { METRIC_KEYS, type LifeMetricRecord, type LoadedRecord, type SaveResult } from "../types";
+import { findSuggestion } from "../lib/suggestions";
+import {
+  METRIC_KEYS,
+  type DaySuggestion,
+  type LifeMetricRecord,
+  type LoadedRecord,
+  type SaveResult,
+} from "../types";
 
 const API_ROOT = "https://sheets.googleapis.com/v4/spreadsheets";
 
@@ -12,6 +19,8 @@ export interface SheetGateway {
   updateRecord(rowNumber: number, record: LifeMetricRecord): Promise<SaveResult>;
   appendRecord(record: LifeMetricRecord): Promise<SaveResult>;
   upsertRecord(record: LifeMetricRecord): Promise<SaveResult>;
+  /** The coach's suggestion for a day, or null. Read-only: the app never writes this tab. */
+  loadSuggestion(date: string): Promise<DaySuggestion | null>;
 }
 
 export class SheetsApiError extends Error {
@@ -29,6 +38,7 @@ type GatewayOptions = {
   accessToken: string;
   spreadsheetId: string;
   sheetName: string;
+  suggestionsSheetName?: string;
   fetchImpl?: typeof fetch;
 };
 
@@ -67,6 +77,7 @@ export const createSheetsGateway = ({
   accessToken,
   spreadsheetId,
   sheetName,
+  suggestionsSheetName = "Suggestions",
   fetchImpl = fetch,
 }: GatewayOptions): SheetGateway => {
   let cachedDateIndex: DateIndex | null = null;
@@ -259,5 +270,19 @@ export const createSheetsGateway = ({
 
   const upsertRecord = (record: LifeMetricRecord): Promise<SaveResult> => appendRecord(record);
 
-  return { loadDateIndex, loadRecord, updateRecord, appendRecord, upsertRecord };
+  const loadSuggestion = async (date: string): Promise<DaySuggestion | null> => {
+    const range = `${quoteSheetName(suggestionsSheetName)}!A:Z`;
+    try {
+      const result = await request<{ values?: unknown[][] }>(
+        `/values/${encodeURIComponent(range)}?valueRenderOption=UNFORMATTED_VALUE&majorDimension=ROWS`,
+      );
+      return findSuggestion(result.values ?? [], date);
+    } catch (error: unknown) {
+      // No Suggestions tab yet (Sheets answers 400 for an unknown range): there's simply nothing to show.
+      if (error instanceof SheetsApiError && error.status === 400) return null;
+      throw error;
+    }
+  };
+
+  return { loadDateIndex, loadRecord, updateRecord, appendRecord, upsertRecord, loadSuggestion };
 };

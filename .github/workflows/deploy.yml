@@ -24,6 +24,7 @@ jobs:
       VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
       VITE_SPREADSHEET_ID: ${{ vars.VITE_SPREADSHEET_ID }}
       VITE_SHEET_NAME: ${{ vars.VITE_SHEET_NAME || 'Main' }}
+      VITE_SUGGESTIONS_SHEET_NAME: ${{ vars.VITE_SUGGESTIONS_SHEET_NAME || 'Suggestions' }}
 
     steps:
       - name: Check out repository

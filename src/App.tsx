@@ -5,6 +5,7 @@ import { SegmentedControl } from "./components/SegmentedControl";
 import { APP_CONFIG } from "./config";
 import { formatClockTime, formatDisplayDate, getToday } from "./lib/date";
 import { createEmptyDraft, draftFingerprint, validateDraft } from "./lib/records";
+import { hasSuggestion } from "./lib/suggestions";
 import { useGoogleAuth } from "./services/auth";
 import { DraftRepository } from "./services/draftStore";
 import { LOCAL_RECORDS_KEY, LocalRecordRepository } from "./services/localRecords";
@@ -13,6 +14,7 @@ import {
   METRIC_KEYS,
   METRIC_LABELS,
   QUALITY_VALUES,
+  type DaySuggestion,
   type JValue,
   type LifeMetricDraft,
   type MetricKey,
@@ -59,6 +61,7 @@ const App = () => {
   const [restoredAt, setRestoredAt] = useState<number | null>(null);
   const [storageBlocked, setStorageBlocked] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
+  const [suggestion, setSuggestion] = useState<DaySuggestion | null>(null);
   const syncRunningRef = useRef(false);
   const initialReconnectCheckedRef = useRef(false);
   const autosaveTimerRef = useRef<number | null>(null);
@@ -74,6 +77,7 @@ const App = () => {
       accessToken: auth.accessToken,
       spreadsheetId: APP_CONFIG.spreadsheetId,
       sheetName: APP_CONFIG.sheetName,
+      suggestionsSheetName: APP_CONFIG.suggestionsSheetName,
     });
   }, [auth.accessToken]);
 
@@ -323,6 +327,23 @@ const App = () => {
     selectedDate,
   ]);
 
+  // The coach's suggestions are a nice-to-have: they never block the form and errors stay quiet.
+  useEffect(() => {
+    if (!gateway || !isOnline) return;
+    let active = true;
+    gateway
+      .loadSuggestion(selectedDate)
+      .then((loaded) => {
+        if (active) setSuggestion(hasSuggestion(loaded) ? loaded : null);
+      })
+      .catch(() => {
+        if (active) setSuggestion(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [gateway, isOnline, selectedDate]);
+
   useEffect(() => {
     if (!isDirty) {
       cancelScheduledAutosave();
@@ -392,6 +413,7 @@ const App = () => {
     setEditingNotesDate(null);
     setDraftSavedAt(null);
     setRestoredAt(null);
+    setSuggestion(null);
   };
 
   const discardRestoredDraft = () => {
@@ -412,6 +434,35 @@ const App = () => {
       scores: { ...current.scores, [key]: value },
     }));
     setFieldErrors((current) => ({ ...current, [key]: undefined }));
+    markDraftChanged();
+  };
+
+  const suggestedKeys = METRIC_KEYS.filter(
+    (key) => suggestion?.scores[key] !== undefined && draft.scores[key].trim() === "",
+  );
+
+  const applyAllSuggestions = () => {
+    if (!suggestion) return;
+    setDraft((current) => ({
+      ...current,
+      scores: Object.fromEntries(
+        METRIC_KEYS.map((key) => [
+          key,
+          current.scores[key].trim() === "" && suggestion.scores[key] !== undefined
+            ? String(suggestion.scores[key])
+            : current.scores[key],
+        ]),
+      ) as LifeMetricDraft["scores"],
+    }));
+    markDraftChanged();
+  };
+
+  const addSuggestedNotes = () => {
+    if (!suggestion?.notes) return;
+    // "—" and "//" separate moments in the sheet, so they can't appear inside one.
+    const notes = suggestion.notes.replaceAll("—", "-").replaceAll("//", "/");
+    setDraft((current) => ({ ...current, notes }));
+    setEditingNotesDate(selectedDate);
     markDraftChanged();
   };
 
@@ -585,6 +636,16 @@ const App = () => {
                 </div>
                 <p>Move a slider for whole numbers, or type a decimal.</p>
               </div>
+              {suggestedKeys.length > 0 && (
+                <div className="suggestions-bar" role="status">
+                  <span>
+                    Suggestions from your day{suggestion?.updatedAt ? ` · updated ${suggestion.updatedAt.slice(11, 16)}` : ""}
+                  </span>
+                  <button className="button button--quiet" type="button" onClick={applyAllSuggestions}>
+                    Use all {suggestedKeys.length}
+                  </button>
+                </div>
+              )}
               <div className="metrics-grid">
                 {METRIC_KEYS.map((key) => (
                   <MetricField
@@ -593,6 +654,9 @@ const App = () => {
                     label={METRIC_LABELS[key]}
                     value={draft.scores[key]}
                     error={fieldErrors[key]}
+                    suggestion={suggestion?.scores[key]}
+                    reason={suggestion?.reasons[key]}
+                    onUseSuggestion={() => updateMetric(key, String(suggestion?.scores[key] ?? ""))}
                     onChange={(value) => updateMetric(key, value)}
                   />
                 ))}
@@ -649,6 +713,17 @@ const App = () => {
                   markDraftChanged();
                 }}
               />
+              {suggestion?.notes && draft.notes.trim() === "" && (
+                <div className="notes-suggestion">
+                  <div>
+                    <p className="eyebrow">From your day</p>
+                    <p>{suggestion.notes}</p>
+                  </div>
+                  <button className="button button--quiet" type="button" onClick={addSuggestedNotes}>
+                    Add to notes
+                  </button>
+                </div>
+              )}
             </section>
 
             <div className="save-bar">

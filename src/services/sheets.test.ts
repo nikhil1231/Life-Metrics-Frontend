@@ -110,4 +110,44 @@ describe("Google Sheets gateway", () => {
       expect.objectContaining<Partial<SheetsApiError>>({ code: "auth", status: 401 }),
     );
   });
+
+  it("reads a day's suggestion from the Suggestions tab without writing anything", async () => {
+    const header = ["Date", "Updated", "Rules", ...METRIC_KEYS, ...METRIC_KEYS.map((k) => `Why: ${k}`), "Notes"];
+    const values = Array(11).fill("");
+    const reasons = Array(11).fill("");
+    values[METRIC_KEYS.indexOf("sleep")] = 8;
+    values[METRIC_KEYS.indexOf("energy")] = 12;   // out of range: ignored
+    reasons[METRIC_KEYS.indexOf("sleep")] = "Oura sleep score 82";
+    reasons[METRIC_KEYS.indexOf("diet")] = "eating out ×1";
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () =>
+      jsonResponse({
+        values: [
+          header,
+          ["2026-08-09", "x", "rules-1", ...Array(22).fill(""), "old"],
+          ["2026-08-10", "2026-08-10 21:30", "rules-1", ...values, ...reasons, "Climbing 1h30"],
+        ],
+      }),
+    );
+    const gateway = createSheetsGateway({ accessToken: "token", spreadsheetId: "sheet", sheetName: "Main", fetchImpl: fetchMock });
+
+    const suggestion = await gateway.loadSuggestion("2026-08-10");
+    expect(suggestion).toEqual({
+      date: "2026-08-10",
+      updatedAt: "2026-08-10 21:30",
+      scores: { sleep: 8 },
+      reasons: { sleep: "Oura sleep score 82", diet: "eating out ×1" },
+      notes: "Climbing 1h30",
+    });
+    expect(await gateway.loadSuggestion("2026-08-11")).toBeNull();
+    expect(String(fetchMock.mock.calls[0][0])).toContain(encodeURIComponent("'Suggestions'!A:Z"));
+    expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+  });
+
+  it("treats a missing Suggestions tab as no suggestion", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse({ error: { message: "Unable to parse range: 'Suggestions'!A:Z" } }, 400));
+    const gateway = createSheetsGateway({ accessToken: "token", spreadsheetId: "sheet", sheetName: "Main", fetchImpl: fetchMock });
+    expect(await gateway.loadSuggestion("2026-08-10")).toBeNull();
+  });
 });

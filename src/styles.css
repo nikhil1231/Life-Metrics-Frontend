@@ -157,6 +157,16 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .metric-card__number { width: 48px; padding: 3px 2px; text-align: right; color: var(--ink); background: transparent; border: 0; border-bottom: 1px solid var(--line); font-size: 1.05rem; font-weight: 800; }
 .metric-card__slider-row { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; margin-top: 13px; color: var(--muted); font-size: 0.68rem; }
 .metric-card__slider { width: 100%; accent-color: var(--terracotta); cursor: pointer; }
+.metric-card--suggested .metric-card__number::placeholder { color: var(--sage); opacity: 0.55; }
+.metric-card__suggestion { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; color: var(--muted); font-size: 0.74rem; line-height: 1.4; }
+.metric-card__use { flex: 0 0 auto; min-height: 28px; padding: 0 11px; color: var(--sage); background: transparent; border: 1px solid rgba(35, 79, 69, 0.22); border-radius: 999px; font: inherit; font-weight: 760; cursor: pointer; }
+.metric-card__use:hover { background: rgba(35, 79, 69, 0.06); }
+.suggestions-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 0 0 14px; padding: 9px 9px 9px 14px; border-radius: 13px; color: var(--sage); background: rgba(35, 79, 69, 0.06); font-size: 0.84rem; font-weight: 650; }
+.suggestions-bar .button { min-height: 34px; color: var(--sage); border-color: rgba(35, 79, 69, 0.22); }
+.notes-suggestion { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin-top: 12px; padding: 12px 14px; border: 1px dashed var(--line); border-radius: 14px; color: var(--muted); font-size: 0.86rem; }
+.notes-suggestion p { margin: 0; }
+.notes-suggestion .eyebrow { margin-bottom: 4px; }
+.notes-suggestion .button { flex: 0 0 auto; min-height: 36px; }
 
 .field-error { margin: 8px 0 0; color: var(--danger); font-size: 0.78rem; font-weight: 650; }
 .field-help { margin: 8px 0 0; color: var(--muted); font-size: 0.78rem; }

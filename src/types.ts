@@ -66,3 +66,12 @@ export type SaveResult = {
 };
 
 export type ValidationErrors = Partial<Record<MetricKey | "date" | "j" | "quality" | "notes", string>>;
+
+/** A coach suggestion for one day, from the Suggestions tab (never written by this app). */
+export type DaySuggestion = {
+  date: string;
+  updatedAt: string;
+  scores: Partial<Record<MetricKey, number>>;
+  reasons: Partial<Record<MetricKey, string>>;
+  notes: string;
+};

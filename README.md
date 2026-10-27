@@ -20,6 +20,7 @@ Requirements: Node.js 22 and a Google Cloud project.
 VITE_GOOGLE_CLIENT_ID=your-web-client-id.apps.googleusercontent.com
 VITE_SPREADSHEET_ID=your-google-spreadsheet-id
 VITE_SHEET_NAME=Main
+VITE_SUGGESTIONS_SHEET_NAME=Suggestions
 ```
 
 6. Install and run:
@@ -71,3 +72,24 @@ In the GitHub repository:
 5. Push to the default branch or run the workflow manually.
 
 If the deployed hostname changes, add its origin to the OAuth client's Authorized JavaScript origins before signing in.
+
+## Coach suggestions
+
+A **Suggestions** tab in the same spreadsheet holds placeholder scores written by the life coach
+([Lookout](https://github.com/nikhil1231/lookout), from Sundial's data). The app only reads it:
+
+| Columns | Data |
+| --- | --- |
+| A | Date (`YYYY-MM-DD` text) |
+| B, C | When it was updated, rules version |
+| D:N | A suggested score per metric, in the B:L order above (blank = no suggestion) |
+| O:Y | Why, per metric (e.g. "Oura sleep score 82, 7h12 asleep") |
+| Z | A notes draft from the day's activities |
+
+While a field is empty its suggestion shows as a placeholder with the reason and a **Use** button;
+**Use all** fills every empty field that has one, and **Add to notes** copies the draft. Nothing is
+written until you save, and fields you've already filled are never touched. If the tab doesn't
+exist or can't be read, the form works exactly as before.
+
+The coach's Google service account can edit the spreadsheet, so protect the **Main** tab (Data →
+Protect sheets and ranges → Main → "Only you"): Google then refuses any write to Main except yours.
